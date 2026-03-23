@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from debate.roles.base import BaseRole
+from debate.roles.base import BadOutputError, BaseRole
 from debate.schemas.ideas import AcquisitionPath, AutonomyScores, Idea, RevenueHorizons
 from debate.prompts.phase1 import IDEATION_PROMPT, get_phase1_tool_schema
 from debate.prompts.phase2 import get_vote_prompt, get_vote_tool_schema
@@ -71,10 +71,25 @@ class Bootstrapper(BaseRole):
 
 # --- Shared parsing helpers (used by all role subclasses) ---
 
+MIN_IDEAS = 5
+
+
 def _parse_ideas(data: dict[str, Any], role: str) -> list[Idea]:
-    """Parse raw tool_use output into Idea models."""
+    """Parse raw tool_use output into Idea models.
+
+    Raises BadOutputError if fewer than MIN_IDEAS are returned — this is
+    a concrete corrective reprompt path: the output is structurally valid
+    JSON but logically insufficient.
+    """
+    raw_ideas = data.get("ideas", [])
+    if len(raw_ideas) < MIN_IDEAS:
+        raise BadOutputError(
+            f"[{role}] Returned {len(raw_ideas)} ideas but minimum is {MIN_IDEAS}. "
+            f"Please return at least {MIN_IDEAS} distinct business ideas."
+        )
+
     ideas: list[Idea] = []
-    for raw in data.get("ideas", []):
+    for raw in raw_ideas:
         autonomy_raw = raw.get("autonomy", {})
         revenue_raw = raw.get("revenue", {})
         acq_raw = raw.get("acquisition_path", {})

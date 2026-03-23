@@ -138,20 +138,41 @@ class Orchestrator:
                 console.print(f"  [yellow]Running: {step_key} (attempt {attempt})[/]")
                 result = fn(*args, **kwargs)
 
-                # Extract cost info if result is a tuple with debug string
+                # Extract cost info from the debug JSON string
                 tokens_in = 0
                 tokens_out = 0
-                cost = 0.0
+                model_used = ""
                 if isinstance(result, tuple) and len(result) == 2:
                     _, debug = result
                     if isinstance(debug, str):
                         self._store.save_debug_artifact(step_key, debug)
+                        try:
+                            debug_data = json.loads(debug)
+                            tokens_in = debug_data.get("tokens_in", 0)
+                            tokens_out = debug_data.get("tokens_out", 0)
+                            model_used = debug_data.get("model", "")
+                        except (json.JSONDecodeError, TypeError):
+                            pass
 
-                step.mark_completed()
+                cost = estimate_cost(
+                    model_used or self._config.model_default, tokens_in, tokens_out
+                )
+                step.mark_completed(
+                    model=model_used,
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                    cost_usd=cost,
+                )
                 self._state.accumulate_cost(tokens_in, tokens_out, cost)
                 self._checkpoint()
 
-                console.print(f"  [green]Completed: {step_key}[/]")
+                if cost > 0:
+                    console.print(
+                        f"  [green]Completed: {step_key} "
+                        f"(tokens: {tokens_in}+{tokens_out}, cost: ${cost:.4f})[/]"
+                    )
+                else:
+                    console.print(f"  [green]Completed: {step_key}[/]")
                 return result
 
             except ValidationFailure as e:
@@ -216,8 +237,7 @@ class Orchestrator:
                 self._state.merged_pool = [i for i in merged if passes_gates(i)]
                 console.print(f"  [green]Merged pool: {len(self._state.merged_pool)} ideas[/]")
 
-        # Step 2b: Each role votes
-        all_votes: list[Vote] = []
+        # Step 2b: Each role votes (persisted per-role for resume safety)
         pool_text = compress_merged_pool(self._state)
         idea_ids = [i.idea_id for i in self._state.merged_pool]
 
@@ -230,9 +250,18 @@ class Orchestrator:
             result = self._run_step(step_key, role.vote, pool_text, idea_ids)
             if result is not None:
                 votes, _ = result
-                all_votes.extend(votes)
+                # Persist this role's votes to state immediately
+                self._state.phase2_role_votes[role_name] = [
+                    v.model_dump(mode="json") for v in votes
+                ]
+                self._checkpoint()
 
-        # Step 2c: Tally
+        # Step 2c: Tally — reconstruct all votes from persisted per-role data
+        all_votes: list[Vote] = []
+        for role_name in DEBATER_ROLES:
+            for v_data in self._state.phase2_role_votes.get(role_name, []):
+                all_votes.append(Vote.model_validate(v_data))
+
         if all_votes:
             vote_round = VoteRound(phase=2, round_number=1, votes=all_votes)
             self._state.phase2_votes = vote_round

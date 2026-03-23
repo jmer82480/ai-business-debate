@@ -14,7 +14,7 @@ from debate.schemas.verdict import FinalVerdict
 from debate.schemas.votes import VoteRound
 
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 
 
 class Phase(str, Enum):
@@ -113,6 +113,10 @@ class DebateState(BaseModel):
 
     # Phase 2: merged pool and vote results
     merged_pool: list[Idea] = Field(default_factory=list)
+    phase2_role_votes: dict[str, list[dict[str, object]]] = Field(
+        default_factory=dict,
+        description="role_name -> serialized Vote list, persisted per-role for resume safety",
+    )
     phase2_votes: VoteRound | None = None
     survivors: list[str] = Field(
         default_factory=list, description="idea_ids that survived Phase 2"

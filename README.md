@@ -1,118 +1,120 @@
-# AI Business Idea Debate — How to Run This
+# AI Business Idea Debate
+
+A deterministic orchestration engine that runs a structured multi-agent debate to find the best AI-first business idea. Five AI agents (Bootstrapper, Market Analyst, Automation Architect, Devil's Advocate, Moderator) debate through 5 phases, producing a final verdict and 90-day launch plan.
+
+## Architecture
+
+The engine is built as a Python CLI with typed workflow state as the source of truth:
+
+```
+debate/
+├── schemas/        # Pydantic models — ideas, votes, scorecards, state
+├── llm/            # LLM client abstraction (roles never import anthropic directly)
+├── roles/          # Role adapters — one per debate agent
+├── prompts/        # Prompt templates per role × phase
+├── validators/     # Gate criteria, evidence standards, phase transitions
+├── renderers/      # State → markdown output files
+├── storage/        # Atomic checkpoint persistence with resume
+├── orchestrator.py # Main loop — phase transitions, validation, rendering
+├── context.py      # Budget-aware context compression
+├── config.py       # All tunables (models, limits, costs, paths)
+└── cli.py          # Click CLI: run, resume, status, render
+```
+
+Key design decisions:
+- **Machine-readable state** is the source of truth; markdown files are rendered artifacts
+- **LLM client abstraction** — roles depend on a protocol, not the Anthropic SDK
+- **Atomic checkpoint writes** — write to temp file, `os.replace()` to final path
+- **Stable idea IDs** — slug + UUID suffix, survives name drift across phases
+- **Failure taxonomy** — transport errors (retry), validation errors (corrective reprompt), bad output (reprompt)
+- **Context compression** — later phases get summaries, not full transcripts
 
 ## Prerequisites
 
-1. **Claude Code installed** (v2.1.32 or later) — check with `claude --version`
-2. **Claude Pro or Max plan** (Agent Teams requires Opus 4.6)
-3. **tmux installed** (optional but recommended — lets you see each agent in its own pane)
-   - Mac: `brew install tmux`
-   - Ubuntu/Debian: `sudo apt install tmux`
+- Python 3.11+
+- An Anthropic API key (set `ANTHROPIC_API_KEY` environment variable)
 
-## Step 1: Enable Agent Teams
-
-Open your settings file:
+## Installation
 
 ```bash
-# The file is at ~/.claude/settings.json
-# If it doesn't exist, create it
+pip install -e ".[dev]"
 ```
 
-Add or merge this into it:
+## Usage
 
-```json
-{
-  "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
-  }
-}
-```
-
-If you already have other settings in that file, just add the `"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"` line inside the existing `"env"` block.
-
-## Step 2: Navigate to This Project
+### Start a new debate
 
 ```bash
-cd /path/to/ai-business-debate
+debate run
 ```
 
-Make sure the `CLAUDE.md` file is in this directory. Claude Code will read it automatically.
+Options:
+- `--model claude-sonnet-4-6` — default model for all phases
+- `--deep-dive-model claude-opus-4-6` — model for Phase 4 deep dives
+- `--no-web-search` — disable web search (faster, less evidence)
+- `--dry-run` — use fake LLM client (no API calls, validates full flow)
+- `--max-rounds 10` — max Phase 3 debate rounds before forcing finalists
+- `--output-dir output` — where markdown files are rendered
+- `-v` — verbose/debug logging
 
-## Step 3: Create the Output Directory
+### Resume a failed or interrupted run
 
 ```bash
-mkdir -p output/phase1 output/phase2 output/phase3 output/phase4
+debate resume --run-id <run-id>
 ```
 
-## Step 4: Launch Claude Code
+### Check status of all runs
 
 ```bash
-claude
+debate status
 ```
 
-Or if you want split panes (recommended):
+### Re-render markdown from a checkpoint
 
 ```bash
-claude --teammate-display tmux
+debate render --run-id <run-id>
 ```
 
-## Step 5: Paste This Prompt
+### Dry-run (validate without API calls)
 
-Copy and paste the following into Claude Code. This is the launch prompt that spawns the team:
-
----
-
-```
-I need you to run a structured multi-agent debate to find the best AI-first business idea. Read the CLAUDE.md for the full protocol — it has gate criteria, optimization priorities, evidence standards, realism rules, phase structure, and convergence rules. Follow it precisely.
-
-Create an agent team with 5 teammates:
-
-1. "bootstrapper" — Evaluates every idea through startup cost. Breaks down costs to the dollar with real pricing from web search. Proposes lean MVPs. Has a strong bias toward ideas under $200, but this is the agent's preference, not a protocol rule — the hard gate is $500 per CLAUDE.md.
-
-2. "market-analyst" — Evaluates demand, competition, defensibility, and distribution using real data. MUST use web search for competitor pricing, market sizes, and demand signals. Skeptical of "blue ocean" claims. For every idea, answers: who is already paying for something similar?
-
-3. "automation-architect" — Evaluates what AI can truly handle vs. what requires the human. Scores autonomy across four dimensions separately: acquisition, fulfillment, support, QA. Applies the "2am test" from CLAUDE.md. Designs specific automation stacks with named tools.
-
-4. "devils-advocate" — MUST disagree with any emerging consensus. For every favored idea, presents 2 concrete failure scenarios with evidence. Only concedes when objections are addressed with data, not hand-waving. Also proposes contrarian/overlooked ideas the others will miss.
-
-5. "moderator" — Controls phase transitions. Merges and deduplicates ideas. Runs votes. Flags conflicting data between agents and forces resolution. Synthesizes debate rounds. Forces decisions when stuck. Writes final verdict including why the runner-up lost.
-
-CRITICAL RULES:
-- Every agent message must start with [ROLE NAME] so I can track who's talking at every step
-- EVIDENCE IS MANDATORY: every major claim about market size, revenue potential, tool pricing, or growth needs a source, date, assumption, and confidence level. "UNSOURCED ESTIMATE" is allowed but must be labeled.
-- Phase 1: Each agent independently researches and proposes 5-8 ideas using web search. Write to output/phase1/[role]-ideas.md. Agents should NOT see each other's lists during this phase.
-- Each idea in Phase 1 must include: startup cost, autonomy sub-scores (acquisition/fulfillment/support/QA), revenue at 3 horizons (90-day, 12-month, 3-year), customer acquisition path, moat/defensibility, platform risk, key risk, and "why now?" (what recent change makes this viable today).
-- After Phase 1, follow the protocol in CLAUDE.md through all phases until convergence
-- The debate ends when there's a winner with a 90-day plan in output/final-plan.md and a verdict in output/verdict.md
-- The verdict MUST include a final ranked table of all finalists (sorted by autonomy composite, with all scorecard dimensions as columns) plus the winner/runner-up narrative
-- No fixed round limit — let the agents decide when they've genuinely converged
-- If Phase 3 goes past 10 rounds without progress, moderator forces top 3 into final showdown
-
-Start Phase 1 now. Have all agents research and generate their ideas in parallel.
+```bash
+debate run --dry-run
 ```
 
----
+This exercises the full pipeline with a fake LLM client — useful for testing that schemas, validators, renderers, and orchestration logic work end-to-end.
 
-## What to Expect
+## Output
 
-- If using tmux, you'll see 5+ panes — one per agent plus the lead
-- Phase 1 will take a few minutes as agents research independently
-- You can watch each agent working in real time
-- The full debate might take 15-30 minutes depending on how many rounds
-- You can intervene at any point by messaging the lead or individual agents
-- Final deliverables land in `output/final-plan.md` and `output/verdict.md`
+All output goes to the `output/` directory:
 
-## Tips
+- `output/phase1/` — each role's independent ideas
+- `output/phase2/` — merged pool and survivors
+- `output/phase3/` — debate round summaries
+- `output/phase4/` — deep dives and scorecards
+- **`output/verdict.md`** — final ranked table, winner/runner-up narrative, agent positions, confidence
+- **`output/final-plan.md`** — 90-day launch plan with acquisition system and automation architecture
 
-- **To see the task list**: Press Ctrl+T (in-process mode)
-- **To cycle between agents**: Press Shift+Down (in-process mode)
-- **To intervene**: Just type to the lead agent — "push harder on idea X" or "I think you're overlooking Y"
-- **If an agent gets stuck**: The lead can message teammates directly
-- **Cost**: Expect roughly $5-15 for the full debate depending on how many rounds
+## Checkpoints
 
-## After It's Done
+State is persisted to `checkpoints/<run-id>/state.json` after every step. If a run fails:
+1. The error and step are recorded
+2. Run `debate resume --run-id <id>` to pick up where it left off
+3. Completed steps are skipped; failed steps are retried
 
-Read these two files:
-- `output/verdict.md` — Starts with a **ranked table** of all finalists sorted by autonomy composite, with every scorecard dimension as columns plus an "Overall Finish" column. The winner may not be the top autonomy scorer — if it isn't, the narrative explains why the full optimization stack favored it. Also includes: why the winner won, why the runner-up lost, each agent's final position, Devil's Advocate remaining concerns, and group confidence level.
-- `output/final-plan.md` — 90-day launch plan including customer acquisition system and automation architecture
+Debug artifacts (raw API responses) are saved to `checkpoints/<run-id>/debug/` when parsing fails.
 
-If you want to run it again with different priorities, edit the gate criteria and optimization priorities at the top of CLAUDE.md and relaunch.
+## Testing
+
+```bash
+python3 -m pytest tests/ -v
+```
+
+67 tests covering: schemas, validators, checkpoint persistence, context compression, renderers, orchestrator flow, phase invariants, and failure recovery.
+
+## Protocol
+
+The full debate protocol is defined in `CLAUDE.md` — gate criteria, optimization priorities, evidence standards, realism rules, phase structure, and convergence conditions.
+
+## Alternative: Agent Teams Mode
+
+For an interactive experience, you can also run this debate using Claude Code's Agent Teams feature. See the launch prompt in `CLAUDE.md` for details. The CLI engine provides deterministic, resumable, auditable runs as an alternative.

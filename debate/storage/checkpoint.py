@@ -39,14 +39,20 @@ class CheckpointStore:
         fd, tmp_path = tempfile.mkstemp(
             dir=str(self._run_dir), suffix=".tmp", prefix="state_"
         )
+        fd_closed = False
         try:
             os.write(fd, json_bytes)
             os.fsync(fd)
             os.close(fd)
+            fd_closed = True
             os.replace(tmp_path, str(self._state_path))
             logger.debug("Checkpoint saved: %s", self._state_path)
         except Exception:
-            os.close(fd) if not os.get_inheritable(fd) else None
+            if not fd_closed:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
             raise

@@ -23,7 +23,7 @@ from debate.roles import ROLE_REGISTRY
 from debate.roles.base import BadOutputError, ValidationFailure
 from debate.roles.moderator import Moderator
 from debate.schemas.common import ConfidenceLevel, RiskLevel
-from debate.schemas.debate import DebateRound
+from debate.schemas.debate import DebateArgument, DebateRound, FailureScenario
 from debate.schemas.ideas import AutonomyScores
 from debate.schemas.scorecard import Scorecard
 from debate.schemas.state import DebateState, Phase, RunMeta, StepStatus
@@ -70,12 +70,20 @@ class Orchestrator:
         return self._state
 
     def resume(self) -> None:
-        """Resume from a saved checkpoint."""
+        """Resume from a saved checkpoint, restoring the original run config."""
         self._state = self._store.load()
+        # Restore the effective config from the original run
+        if self._state.run_config:
+            self._config = DebateConfig.from_dict(self._state.run_config)
+            self._renderer = MarkdownRenderer(self._config)
+            logger.info("Restored run config from checkpoint: %s", self._state.run_config)
         console.print(f"[bold green]Resumed run {self._run_id} at {self._state.current_phase.value}[/]")
 
     def run(self) -> None:
         """Execute the full debate from current state to completion."""
+        # Persist the effective config at run start (no-op if already set from resume)
+        if not self._state.run_config:
+            self._state.run_config = self._config.to_dict()
         console.print(f"[bold]Starting debate run {self._run_id}[/]\n")
 
         phases = [
@@ -133,6 +141,7 @@ class Orchestrator:
         for attempt in range(1, self._config.max_retries_per_step + 1):
             step.mark_running()
             self._checkpoint()
+            debug_str: str | None = None
 
             try:
                 console.print(f"  [yellow]Running: {step_key} (attempt {attempt})[/]")
@@ -145,7 +154,7 @@ class Orchestrator:
                 if isinstance(result, tuple) and len(result) == 2:
                     _, debug = result
                     if isinstance(debug, str):
-                        self._store.save_debug_artifact(step_key, debug)
+                        debug_str = debug
                         try:
                             debug_data = json.loads(debug)
                             tokens_in = debug_data.get("tokens_in", 0)
@@ -175,23 +184,32 @@ class Orchestrator:
                     console.print(f"  [green]Completed: {step_key}[/]")
                 return result
 
-            except ValidationFailure as e:
-                logger.warning("Validation failure in %s: %s", step_key, e)
-                step.mark_failed(str(e))
-                if attempt >= self._config.max_retries_per_step:
-                    raise
-                console.print(f"  [red]Validation error, retrying: {e}[/]")
+            except (ValidationFailure, BadOutputError, Exception) as e:
+                is_bad_output = isinstance(e, BadOutputError)
+                is_validation = isinstance(e, ValidationFailure)
+                is_retryable = is_bad_output or is_validation
 
-            except BadOutputError as e:
-                logger.warning("Bad output in %s: %s", step_key, e)
-                step.mark_failed(str(e))
-                if attempt >= self._config.max_retries_per_step:
-                    raise
-                console.print(f"  [red]Bad output, retrying with correction: {e}[/]")
+                if is_validation:
+                    logger.warning("Validation failure in %s: %s", step_key, e)
+                elif is_bad_output:
+                    logger.warning("Bad output in %s: %s", step_key, e)
+                else:
+                    logger.error("Unexpected error in %s: %s", step_key, e)
 
-            except Exception as e:
-                logger.error("Unexpected error in %s: %s", step_key, e)
                 step.mark_failed(str(e))
+
+                # Save debug artifact: prefer the returned debug string,
+                # fall back to the role's last captured response
+                fail_debug = debug_str
+                if not fail_debug and hasattr(fn, "__self__") and hasattr(fn.__self__, "_last_debug"):
+                    fail_debug = fn.__self__._last_debug
+                if fail_debug:
+                    self._store.save_debug_artifact(step_key, fail_debug)
+
+                if is_retryable and attempt < self._config.max_retries_per_step:
+                    label = "Bad output" if is_bad_output else "Validation error"
+                    console.print(f"  [red]{label}, retrying: {e}[/]")
+                    continue
                 raise
 
     # ---- Phase 1: Independent Ideation ----
@@ -306,7 +324,6 @@ class Orchestrator:
             console.print(f"\n  [bold]--- Debate Round {round_num} ({len(current_survivors)} ideas) ---[/]")
 
             # All roles debate
-            round_arguments = []
             survivors_text = compress_survivors(self._state)
             prior_text = compress_debate_history(self._state)
 
@@ -321,7 +338,31 @@ class Orchestrator:
                 )
                 if result is not None:
                     args, _ = result
-                    round_arguments.extend(args)
+                    # Persist per-role for resume safety
+                    persist_key = f"round{round_num}_{role_name}"
+                    self._state.phase3_role_arguments[persist_key] = [
+                        a.model_dump(mode="json") for a in args
+                    ]
+                    self._checkpoint()
+
+            # Reconstruct all arguments from persisted per-role data
+            round_arguments = []
+            for role_name in DEBATER_ROLES:
+                persist_key = f"round{round_num}_{role_name}"
+                for a_data in self._state.phase3_role_arguments.get(persist_key, []):
+                    round_arguments.append(
+                        DebateArgument(
+                            idea_id=a_data["idea_id"],
+                            role=a_data["role"],
+                            position=a_data.get("position", "response"),
+                            argument=a_data.get("argument", ""),
+                            vote=a_data.get("vote"),
+                            failure_scenarios=[
+                                FailureScenario(**fs)
+                                for fs in a_data.get("failure_scenarios", [])
+                            ],
+                        )
+                    )
 
             # Moderator synthesis
             synth_key = f"phase_3_debate.round{round_num}_synthesis"
@@ -423,8 +464,7 @@ class Orchestrator:
 
         scorecards_text = compress_all_scorecards(self._state)
 
-        # Each role votes
-        all_positions: list[AgentPosition] = []
+        # Each role votes (persisted per-role for resume safety)
         for role_name in DEBATER_ROLES:
             step_key = f"phase_5_convergence.vote_{role_name}"
             if self._state.is_step_completed(step_key):
@@ -434,15 +474,22 @@ class Orchestrator:
             result = self._run_step(step_key, role.final_vote, scorecards_text)
             if result is not None:
                 data, _ = result
-                all_positions.append(
-                    AgentPosition(
-                        role=role_name,
-                        voted_for_idea_id=data["voted_for_idea_id"],
-                        ranking=data.get("ranking", []),
-                        justification=data["justification"],
-                        remaining_concerns=data.get("remaining_concerns", ""),
-                    )
+                position = AgentPosition(
+                    role=role_name,
+                    voted_for_idea_id=data["voted_for_idea_id"],
+                    ranking=data.get("ranking", []),
+                    justification=data["justification"],
+                    remaining_concerns=data.get("remaining_concerns", ""),
                 )
+                self._state.phase5_role_positions[role_name] = position.model_dump(mode="json")
+                self._checkpoint()
+
+        # Reconstruct all positions from persisted per-role data
+        all_positions: list[AgentPosition] = []
+        for role_name in DEBATER_ROLES:
+            p_data = self._state.phase5_role_positions.get(role_name)
+            if p_data:
+                all_positions.append(AgentPosition.model_validate(p_data))
 
         self._state.final_votes = [p.model_dump() for p in all_positions]
 

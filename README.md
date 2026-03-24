@@ -63,6 +63,8 @@ Options:
 debate resume --run-id <run-id>
 ```
 
+Resume restores the **original run config** (model, web search, max rounds) from the checkpoint. You don't need to re-pass flags like `--no-web-search` — they're persisted automatically.
+
 ### Check status of all runs
 
 ```bash
@@ -101,7 +103,11 @@ State is persisted to `checkpoints/<run-id>/state.json` after every step. If a r
 2. Run `debate resume --run-id <id>` to pick up where it left off
 3. Completed steps are skipped; failed steps are retried
 
-Debug artifacts (raw API responses) are saved to `checkpoints/<run-id>/debug/` when parsing fails.
+Debug artifacts (raw API responses) are saved to `checkpoints/<run-id>/debug/` **only on failure** — not on every step. Bounded to 50 files, 100KB each.
+
+### Rate limits
+
+With web search enabled, a single call can consume 300K+ input tokens (search results are included). If your plan has a low per-minute token limit, use `--no-web-search` or expect longer backoff waits (60s+ between retries on 429).
 
 ## Testing
 
@@ -109,7 +115,7 @@ Debug artifacts (raw API responses) are saved to `checkpoints/<run-id>/debug/` w
 python3 -m pytest tests/ -v
 ```
 
-67 tests covering: schemas, validators, checkpoint persistence, context compression, renderers, orchestrator flow, phase invariants, and failure recovery.
+~90 tests covering: schemas, validators, checkpoint persistence, context compression, renderers, orchestrator flow, phase invariants, failure recovery, resume fidelity, cost tracking, truncation guards, and Phase 2/3/5 resume safety.
 
 ## Protocol
 

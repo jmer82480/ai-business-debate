@@ -14,7 +14,7 @@ from debate.schemas.verdict import FinalVerdict
 from debate.schemas.votes import VoteRound
 
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
 
 
 class Phase(str, Enum):
@@ -106,6 +106,12 @@ class DebateState(BaseModel):
     current_phase: Phase = Phase.PHASE_1_IDEATION
     steps: dict[str, StepMeta] = Field(default_factory=dict)
 
+    # Effective config snapshot — persisted at run start, restored on resume
+    run_config: dict[str, object] = Field(
+        default_factory=dict,
+        description="Serialized DebateConfig from the original run. Used to restore settings on resume.",
+    )
+
     # Phase 1: ideas proposed by each role
     phase1_ideas: dict[str, list[Idea]] = Field(
         default_factory=dict, description="role_name -> list of ideas"
@@ -124,6 +130,11 @@ class DebateState(BaseModel):
 
     # Phase 3: debate rounds
     debate_rounds: list[DebateRound] = Field(default_factory=list)
+    # Per-role debate arguments persisted for resume safety: "round{N}_{role}" -> serialized list
+    phase3_role_arguments: dict[str, list[dict[str, object]]] = Field(
+        default_factory=dict,
+        description="step_key -> serialized DebateArgument list, persisted per-role for resume safety",
+    )
     finalists: list[str] = Field(
         default_factory=list, description="idea_ids that reached Phase 4"
     )
@@ -134,6 +145,11 @@ class DebateState(BaseModel):
     )
 
     # Phase 5: verdict
+    # Per-role final positions persisted for resume safety
+    phase5_role_positions: dict[str, dict[str, object]] = Field(
+        default_factory=dict,
+        description="role_name -> serialized AgentPosition, persisted per-role for resume safety",
+    )
     final_votes: list[dict[str, object]] = Field(default_factory=list)
     verdict: FinalVerdict | None = None
 

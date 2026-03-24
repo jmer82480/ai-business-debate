@@ -66,3 +66,23 @@ class DebateConfig:
     @property
     def checkpoint_path(self) -> Path:
         return Path(self.checkpoint_dir)
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize config to a dict for checkpoint persistence."""
+        return {
+            "model_default": self.model_default,
+            "model_deep_dive": self.model_deep_dive,
+            "max_phase3_rounds": self.max_phase3_rounds,
+            "max_retries_per_step": self.max_retries_per_step,
+            "retry_delay_seconds": self.retry_delay_seconds,
+            "api_timeout_seconds": self.api_timeout_seconds,
+            "web_search_enabled": self.web_search_enabled,
+            "prompt_context_budget_tokens": self.prompt_context_budget_tokens,
+            "output_dir": self.output_dir,
+            "checkpoint_dir": self.checkpoint_dir,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "DebateConfig":
+        """Restore config from a checkpoint dict."""
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})

@@ -33,6 +33,7 @@ class BaseRole:
     def __init__(self, client: LLMClient, config: DebateConfig) -> None:
         self._client = client
         self._config = config
+        self._last_debug: str | None = None  # set after every LLM call for failure diagnosis
 
     @property
     def system_prompt(self) -> str:
@@ -70,6 +71,7 @@ class BaseRole:
             ),
         )
 
+        self._last_debug = self._get_raw_for_debug(response)
         return response
 
     def _extract_tool_data(self, response: LLMResponse, expected_tool: str) -> dict[str, Any]:

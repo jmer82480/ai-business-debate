@@ -115,7 +115,7 @@ With web search enabled, a single call can consume 300K+ input tokens (search re
 python3 -m pytest tests/ -v
 ```
 
-~90 tests covering: schemas, validators, checkpoint persistence, context compression, renderers, orchestrator flow, phase invariants, failure recovery, resume fidelity, cost tracking, truncation guards, and Phase 2/3/5 resume safety.
+100 tests covering: schemas, validators, checkpoint persistence, context compression, renderers, orchestrator flow, phase invariants, failure recovery, resume fidelity (config + all phases), cost tracking, truncation guards, merge validation, and Phase 2/3/4/5 resume safety.
 
 ## Protocol
 

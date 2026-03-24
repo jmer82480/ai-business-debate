@@ -14,7 +14,7 @@ from debate.schemas.verdict import FinalVerdict
 from debate.schemas.votes import VoteRound
 
 
-SCHEMA_VERSION = "0.3.0"
+SCHEMA_VERSION = "0.4.0"
 
 
 class Phase(str, Enum):
@@ -139,6 +139,15 @@ class DebateState(BaseModel):
         default_factory=list, description="idea_ids that reached Phase 4"
     )
 
+    # Phase 4: deep dive and stress test outputs persisted for resume safety
+    phase4_deep_dives: dict[str, dict[str, object]] = Field(
+        default_factory=dict,
+        description="idea_id -> raw deep dive tool_use dict, persisted for resume safety",
+    )
+    phase4_stress_tests: dict[str, dict[str, object]] = Field(
+        default_factory=dict,
+        description="idea_id -> raw stress test tool_use dict, persisted for resume safety",
+    )
     # Phase 4: scorecards
     scorecards: dict[str, Scorecard] = Field(
         default_factory=dict, description="idea_id -> Scorecard"

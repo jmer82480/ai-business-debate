@@ -70,12 +70,23 @@ class Orchestrator:
         return self._state
 
     def resume(self) -> None:
-        """Resume from a saved checkpoint, restoring the original run config."""
+        """Resume from a saved checkpoint, restoring the original run config.
+
+        Rebuilds all runtime dependencies (store, renderer, roles) so they
+        use the restored config — not the default config from the CLI.
+        """
         self._state = self._store.load()
         # Restore the effective config from the original run
         if self._state.run_config:
             self._config = DebateConfig.from_dict(self._state.run_config)
+            # Rebuild every runtime dependency with the restored config
+            self._store = CheckpointStore(self._config, self._run_id)
             self._renderer = MarkdownRenderer(self._config)
+            self._roles = {
+                name: cls(self._client, self._config)
+                for name, cls in ROLE_REGISTRY.items()
+            }
+            self._moderator = self._roles["moderator"]  # type: ignore[assignment]
             logger.info("Restored run config from checkpoint: %s", self._state.run_config)
         console.print(f"[bold green]Resumed run {self._run_id} at {self._state.current_phase.value}[/]")
 
@@ -403,7 +414,11 @@ class Orchestrator:
     # ---- Phase 4: Deep Dive ----
 
     def _run_phase4(self) -> None:
-        """Deep dive + scorecard for each finalist."""
+        """Deep dive + scorecard for each finalist.
+
+        Both deep-dive and stress-test outputs are persisted to state so that
+        resume after a mid-phase crash can reconstruct scorecard inputs.
+        """
         try:
             validate_phase_transition(self._state, Phase.PHASE_4_DEEP_DIVE)
         except PhaseTransitionError as e:
@@ -419,9 +434,8 @@ class Orchestrator:
             idea_context = compress_idea(idea)
             debate_context = compress_debate_history(self._state)
 
-            # Deep dive
+            # Deep dive (persist raw output for resume safety)
             dd_key = f"phase_4_deep_dive.{idea_id}"
-            dd_data: dict[str, Any] | None = None
             if not self._state.is_step_completed(dd_key):
                 result = self._run_step(
                     dd_key,
@@ -433,10 +447,14 @@ class Orchestrator:
                 )
                 if result is not None:
                     dd_data, _ = result
+                    self._state.phase4_deep_dives[idea_id] = dd_data
+                    self._checkpoint()
 
-            # DA stress test
+            # Reconstruct dd_data from persisted state
+            dd_data = self._state.phase4_deep_dives.get(idea_id)
+
+            # DA stress test (persist raw output for resume safety)
             da_key = f"phase_4_deep_dive.da_stress_{idea_id}"
-            da_data: dict[str, Any] | None = None
             if not self._state.is_step_completed(da_key):
                 da_role = self._roles["devils_advocate"]
                 dd_text = json.dumps(dd_data, indent=2) if dd_data else "No deep dive data."
@@ -445,8 +463,13 @@ class Orchestrator:
                 )
                 if result is not None:
                     da_data, _ = result
+                    self._state.phase4_stress_tests[idea_id] = da_data
+                    self._checkpoint()
 
-            # Build scorecard
+            # Reconstruct da_data from persisted state
+            da_data = self._state.phase4_stress_tests.get(idea_id)
+
+            # Build scorecard (idempotent — overwrites if already present)
             if dd_data:
                 sc = self._build_scorecard(idea, dd_data, da_data)
                 self._state.scorecards[idea_id] = sc

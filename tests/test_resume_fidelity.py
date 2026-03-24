@@ -24,11 +24,11 @@ from debate.storage.checkpoint import CheckpointStore
 class TestConfigPersistence:
     def test_run_config_persisted_on_start(self, config):
         """Starting a run persists the effective config in state."""
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
         config.web_search_enabled = False
         config.max_phase3_rounds = 5
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch.run()
 
@@ -38,11 +38,11 @@ class TestConfigPersistence:
 
     def test_resume_restores_original_config(self, config):
         """Resuming a run restores the original config, not defaults."""
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
         config.web_search_enabled = False
         config.max_phase3_rounds = 7
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch.run()
 
@@ -53,7 +53,7 @@ class TestConfigPersistence:
         )
         assert default_config.web_search_enabled is True  # confirm default
 
-        orch2 = Orchestrator(_make_dry_run_client(), default_config, run_id=orch.run_id)
+        orch2 = Orchestrator(make_dry_run_client(), default_config, run_id=orch.run_id)
         orch2.resume()
 
         # After resume, config should be restored to original values
@@ -75,10 +75,10 @@ class TestConfigPersistence:
 
     def test_run_config_survives_checkpoint_roundtrip(self, config):
         """run_config field survives JSON serialization via checkpoint."""
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
         config.web_search_enabled = False
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch.run()
 
@@ -96,9 +96,9 @@ class TestConfigPersistence:
 class TestPhase3Resume:
     def test_debate_arguments_persisted_per_role(self, config):
         """Phase 3 debate arguments are persisted per-role in state."""
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch.run()
 
@@ -112,9 +112,9 @@ class TestPhase3Resume:
 class TestPhase5Resume:
     def test_final_positions_persisted_per_role(self, config):
         """Phase 5 final positions are persisted per-role in state."""
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch.run()
 
@@ -127,9 +127,9 @@ class TestPhase5Resume:
 
     def test_phase5_positions_survive_checkpoint_roundtrip(self, config):
         """Persisted positions survive JSON checkpoint save/load."""
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch.run()
 
@@ -150,9 +150,9 @@ class TestPhase5Resume:
 class TestDebugArtifactPolicy:
     def test_no_debug_artifacts_on_success(self, config):
         """Successful steps should NOT produce debug artifacts."""
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch._run_phase1()
 
@@ -226,6 +226,104 @@ class TestCheckpointExceptionSafety:
         store.save(state)
         loaded = store.load()
         assert loaded.current_phase == Phase.PHASE_3_DEBATE
+
+
+# ---------------------------------------------------------------------------
+# Fix 5: Resume rebuilds roles with restored config
+# ---------------------------------------------------------------------------
+
+
+class TestResumeRebuildsDependencies:
+    def test_roles_use_restored_config(self, config):
+        """After resume, role adapters must use the restored config, not the default."""
+        from debate.llm.dry_run import make_dry_run_client
+
+        config.web_search_enabled = False
+        client = make_dry_run_client()
+        orch = Orchestrator(client, config)
+        orch.run()
+
+        # Resume with a default config (web_search_enabled=True)
+        default_config = DebateConfig(
+            output_dir=config.output_dir,
+            checkpoint_dir=config.checkpoint_dir,
+        )
+        orch2 = Orchestrator(make_dry_run_client(), default_config, run_id=orch.run_id)
+        orch2.resume()
+
+        # Roles should use the restored config, not the default
+        for role in orch2._roles.values():
+            assert role._config.web_search_enabled is False
+
+
+# ---------------------------------------------------------------------------
+# Fix 6: Phase 4 deep-dive/stress-test persisted for resume
+# ---------------------------------------------------------------------------
+
+
+class TestPhase4Resume:
+    def test_deep_dive_persisted(self, config):
+        """Phase 4 deep-dive outputs are persisted per-idea in state."""
+        from debate.llm.dry_run import make_dry_run_client
+
+        client = make_dry_run_client()
+        orch = Orchestrator(client, config)
+        orch.run()
+
+        # Should have persisted deep dive for at least one finalist
+        assert len(orch.state.phase4_deep_dives) > 0
+        for idea_id, dd in orch.state.phase4_deep_dives.items():
+            assert "autonomy" in dd or "startup_cost_total" in dd
+
+    def test_stress_test_persisted(self, config):
+        """Phase 4 stress-test outputs are persisted per-idea in state."""
+        from debate.llm.dry_run import make_dry_run_client
+
+        client = make_dry_run_client()
+        orch = Orchestrator(client, config)
+        orch.run()
+
+        assert len(orch.state.phase4_stress_tests) > 0
+
+    def test_phase4_data_survives_checkpoint_roundtrip(self, config):
+        """Persisted Phase 4 data survives JSON checkpoint save/load."""
+        from debate.llm.dry_run import make_dry_run_client
+
+        client = make_dry_run_client()
+        orch = Orchestrator(client, config)
+        orch.run()
+
+        state_json = orch.state.model_dump_json()
+        loaded = DebateState.model_validate_json(state_json)
+        assert len(loaded.phase4_deep_dives) == len(orch.state.phase4_deep_dives)
+        assert len(loaded.phase4_stress_tests) == len(orch.state.phase4_stress_tests)
+
+
+# ---------------------------------------------------------------------------
+# Fix 7: Merge validates non-empty output
+# ---------------------------------------------------------------------------
+
+
+class TestMergeValidation:
+    def test_empty_merge_raises_bad_output(self, config):
+        """Moderator.merge_ideas raises BadOutputError when merge returns 0 ideas."""
+        from debate.roles.base import BadOutputError
+
+        def respond(messages, system, tools, model, call_index, **kw):
+            return LLMResponse(
+                tool_use={"ideas": [], "eliminated": [], "conflicts": []},
+                tool_name="submit_merged_pool",
+                model="fake",
+                tokens_in=100,
+                tokens_out=50,
+            )
+
+        client = FakeLLMClient(response_fn=respond)
+        from debate.roles.moderator import Moderator
+        mod = Moderator(client, config)
+
+        with pytest.raises(BadOutputError, match="0 ideas"):
+            mod.merge_ideas("test ideas text")
 
 
 # ---------------------------------------------------------------------------

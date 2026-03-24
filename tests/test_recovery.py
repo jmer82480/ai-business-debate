@@ -39,9 +39,9 @@ class TestPartialFailureRecovery:
 
     def test_completed_steps_skipped_on_resume(self, config):
         """Verify that resume skips steps marked completed."""
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch.run()
 
@@ -50,7 +50,7 @@ class TestPartialFailureRecovery:
             assert step_meta.status == StepStatus.COMPLETED, f"Step {step_key} not completed"
 
         # Create new orchestrator pointing to same run
-        orch2 = Orchestrator(_make_dry_run_client(), config, run_id=orch.run_id)
+        orch2 = Orchestrator(make_dry_run_client(), config, run_id=orch.run_id)
         orch2.resume()
 
         # State should be loaded as completed
@@ -58,9 +58,9 @@ class TestPartialFailureRecovery:
 
     def test_checkpoint_survives_multiple_saves(self, config):
         """Multiple saves don't corrupt state."""
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
 
         # Run phase 1 only

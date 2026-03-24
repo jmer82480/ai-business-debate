@@ -115,9 +115,9 @@ class TestBadOutputRetryInRunStep:
 class TestPhase2Resume:
     def test_role_votes_persisted_to_state(self, config):
         """After Phase 2, phase2_role_votes has entries for each debater role."""
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch._run_phase1()
         orch._run_phase2()
@@ -130,9 +130,9 @@ class TestPhase2Resume:
 
     def test_votes_reconstructed_from_persisted_data(self, config):
         """Tally uses reconstructed votes from phase2_role_votes, not ephemeral lists."""
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch._run_phase1()
         orch._run_phase2()
@@ -150,9 +150,9 @@ class TestPhase2Resume:
 
     def test_phase2_role_votes_serializable(self, config):
         """Persisted per-role votes survive JSON round-trip (checkpoint safe)."""
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch._run_phase1()
         orch._run_phase2()
@@ -176,9 +176,9 @@ class TestPhase2Resume:
 class TestCostTracking:
     def test_step_accumulates_cost(self, config):
         """Completed step has tokens and cost from the debug JSON."""
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch._run_phase1()
 
@@ -193,9 +193,9 @@ class TestCostTracking:
 
     def test_run_meta_accumulates_total_cost(self, config):
         """RunMeta total cost accumulates across all steps."""
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch.run()
 
@@ -344,9 +344,9 @@ class TestEmptyMergePoolGate:
 
     def test_empty_pool_raises_before_voting(self, config):
         """If merge produces 0 ideas, Phase 2 raises before voting begins."""
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch._run_phase1()
 

@@ -19,15 +19,28 @@ class Moderator(BaseRole):
     role_name = "moderator"
 
     def merge_ideas(self, all_ideas_text: str) -> tuple[dict[str, Any], str]:
-        """Phase 2a: merge and deduplicate all ideas."""
+        """Phase 2a: merge and deduplicate all ideas.
+
+        Uses 16384 max_tokens — the leaner schema (no evidence, concise
+        descriptions) fits comfortably. If the model still truncates, the
+        truncation guard in _extract_tool_data will catch it and retry.
+        """
         tool = get_merge_tool_schema()
         response = self._call_llm(
             get_merge_prompt(all_ideas_text),
             tools=[tool],
             tool_choice={"type": "tool", "name": "submit_merged_pool"},
-            max_tokens=32768,
+            max_tokens=16384,
         )
         data = self._extract_tool_data(response, "submit_merged_pool")
+        # Validate merge produced ideas
+        ideas = data.get("ideas", [])
+        if len(ideas) == 0:
+            from debate.roles.base import BadOutputError
+            raise BadOutputError(
+                f"[{self.role_name}] Merge produced 0 ideas. "
+                "The merged pool must contain at least 1 idea."
+            )
         return data, self._get_raw_for_debug(response)
 
     def synthesize_round(

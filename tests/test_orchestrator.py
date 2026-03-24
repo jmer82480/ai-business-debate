@@ -11,9 +11,9 @@ class TestOrchestratorDryRun:
     """Test the orchestrator with the CLI's dry-run fake client."""
 
     def test_full_flow_completes(self, config):
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch.run()
 
@@ -23,9 +23,9 @@ class TestOrchestratorDryRun:
         assert state.verdict.winner_idea_id != ""
 
     def test_phase1_produces_ideas(self, config):
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
 
         # Run just phase 1
@@ -36,9 +36,9 @@ class TestOrchestratorDryRun:
             assert len(ideas) == 5, f"{role} produced {len(ideas)} ideas"
 
     def test_checkpoint_created(self, config):
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch.run()
 
@@ -49,23 +49,23 @@ class TestOrchestratorDryRun:
         assert loaded.current_phase == Phase.COMPLETED
 
     def test_resume_skips_completed_steps(self, config):
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch.run()
 
         # Resume — should be a no-op since everything is completed
-        orch2 = Orchestrator(_make_dry_run_client(), config, run_id=orch.run_id)
+        orch2 = Orchestrator(make_dry_run_client(), config, run_id=orch.run_id)
         orch2.resume()
         # State should be loaded
         assert orch2.state.current_phase == Phase.COMPLETED
 
     def test_output_files_created(self, config):
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
         from pathlib import Path
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch.run()
 
@@ -75,9 +75,9 @@ class TestOrchestratorDryRun:
         assert (output / "phase1").is_dir()
 
     def test_steps_tracked(self, config):
-        from debate.cli import _make_dry_run_client
+        from debate.llm.dry_run import make_dry_run_client
 
-        client = _make_dry_run_client()
+        client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch.run()
 

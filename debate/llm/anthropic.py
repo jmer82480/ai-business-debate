@@ -30,6 +30,11 @@ class AnthropicClient:
         self._client = anthropic.Anthropic()
         self._config = config
 
+    def set_config(self, config: DebateConfig) -> None:
+        """Replace the stored config. Used by Orchestrator.resume() to apply
+        the original run's settings (web_search, retries, etc.) to the client."""
+        self._config = config
+
     def complete(
         self,
         messages: list[dict[str, Any]],

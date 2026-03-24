@@ -255,6 +255,41 @@ class TestResumeRebuildsDependencies:
         for role in orch2._roles.values():
             assert role._config.web_search_enabled is False
 
+    def test_client_config_updated_on_resume(self, config):
+        """After resume, the LLM client's config must be updated to match the restored config."""
+        from debate.llm.dry_run import make_dry_run_client
+
+        config.web_search_enabled = False
+        config.max_retries_per_step = 5
+        client = make_dry_run_client()
+        orch = Orchestrator(client, config)
+        orch.run()
+
+        # Resume with a client that supports set_config
+        class ConfigTrackingClient(FakeLLMClient):
+            """Fake client that exposes set_config like AnthropicClient."""
+            def __init__(self, inner):
+                super().__init__(response_fn=inner._response_fn)
+                self._config = DebateConfig()  # default: web_search=True
+
+            def set_config(self, cfg):
+                self._config = cfg
+
+        inner = make_dry_run_client()
+        tracking_client = ConfigTrackingClient(inner)
+        assert tracking_client._config.web_search_enabled is True  # starts with default
+
+        default_config = DebateConfig(
+            output_dir=config.output_dir,
+            checkpoint_dir=config.checkpoint_dir,
+        )
+        orch2 = Orchestrator(tracking_client, default_config, run_id=orch.run_id)
+        orch2.resume()
+
+        # Client config should now match the original run
+        assert tracking_client._config.web_search_enabled is False
+        assert tracking_client._config.max_retries_per_step == 5
+
 
 # ---------------------------------------------------------------------------
 # Fix 6: Phase 4 deep-dive/stress-test persisted for resume

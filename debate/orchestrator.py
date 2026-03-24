@@ -72,14 +72,17 @@ class Orchestrator:
     def resume(self) -> None:
         """Resume from a saved checkpoint, restoring the original run config.
 
-        Rebuilds all runtime dependencies (store, renderer, roles) so they
-        use the restored config — not the default config from the CLI.
+        Rebuilds ALL runtime dependencies — client config, store, renderer,
+        roles — so they use the restored config, not the CLI default.
         """
         self._state = self._store.load()
         # Restore the effective config from the original run
         if self._state.run_config:
             self._config = DebateConfig.from_dict(self._state.run_config)
-            # Rebuild every runtime dependency with the restored config
+            # Update the LLM client's config (web_search, retries, model_default)
+            if hasattr(self._client, "set_config"):
+                self._client.set_config(self._config)
+            # Rebuild every other runtime dependency with the restored config
             self._store = CheckpointStore(self._config, self._run_id)
             self._renderer = MarkdownRenderer(self._config)
             self._roles = {

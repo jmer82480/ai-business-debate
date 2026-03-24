@@ -21,16 +21,16 @@ class Moderator(BaseRole):
     def merge_ideas(self, all_ideas_text: str) -> tuple[dict[str, Any], str]:
         """Phase 2a: merge and deduplicate all ideas.
 
-        Uses 16384 max_tokens — the leaner schema (no evidence, concise
-        descriptions) fits comfortably. If the model still truncates, the
-        truncation guard in _extract_tool_data will catch it and retry.
+        Uses 32768 max_tokens — with 4 roles × 8 ideas and 15 output fields
+        per merged idea, 16384 is not enough and causes truncation. Streaming
+        is used automatically for max_tokens > 16384 by the Anthropic client.
         """
         tool = get_merge_tool_schema()
         response = self._call_llm(
             get_merge_prompt(all_ideas_text),
             tools=[tool],
             tool_choice={"type": "tool", "name": "submit_merged_pool"},
-            max_tokens=16384,
+            max_tokens=32768,
         )
         data = self._extract_tool_data(response, "submit_merged_pool")
         # Validate merge produced ideas

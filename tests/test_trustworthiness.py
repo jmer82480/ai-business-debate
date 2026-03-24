@@ -249,6 +249,42 @@ class TestCostTracking:
 # ---------------------------------------------------------------------------
 
 
+class TestMergeTokenBudget:
+    """Regression: merge must use enough max_tokens to avoid truncation."""
+
+    def test_merge_uses_sufficient_max_tokens(self, config):
+        """moderator.merge_ideas() must request >= 32768 max_tokens."""
+        from debate.roles.moderator import Moderator
+
+        calls = []
+
+        def capture(messages, system, tools, model, call_index, **kw):
+            calls.append(kw)
+            # Return valid merge output
+            merged = []
+            for i in range(8):
+                idea = _stub_idea(i)
+                idea["idea_id"] = f"stub-{i}-00000000"
+                idea["proposed_by"] = ["bootstrapper"]
+                merged.append(idea)
+            return LLMResponse(
+                tool_use={"ideas": merged, "eliminated": [], "conflicts": []},
+                tool_name="submit_merged_pool",
+                model="fake",
+                tokens_in=100,
+                tokens_out=5000,
+                stop_reason="end_turn",
+            )
+
+        client = FakeLLMClient(response_fn=capture)
+        mod = Moderator(client, config)
+        mod.merge_ideas("test ideas text")
+
+        # The call should have requested max_tokens >= 32768
+        assert len(client.calls) == 1
+        assert client.calls[0]["max_tokens"] >= 32768
+
+
 class TestTruncatedResponse:
     """stop_reason=max_tokens must raise ValidationFailure, not silently proceed."""
 

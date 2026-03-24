@@ -56,16 +56,44 @@ class AnthropicClient:
         if all_tools:
             kwargs["tools"] = all_tools
         if tool_choice:
-            kwargs["tool_choice"] = tool_choice
+            # When web_search is present, forcing a specific tool prevents the
+            # model from doing research first. Relax to "any" so the model can
+            # use web_search internally before calling the required tool.
+            has_web_search = any(
+                t.get("type", "").startswith("web_search") for t in all_tools
+            )
+            if has_web_search and tool_choice.get("type") == "tool":
+                kwargs["tool_choice"] = {"type": "any"}
+            else:
+                kwargs["tool_choice"] = tool_choice
 
         last_error: Exception | None = None
         for attempt in range(1, self._config.max_retries_per_step + 1):
             try:
-                response = self._client.messages.create(**kwargs)
+                # Use streaming for large max_tokens to avoid SDK timeout
+                # rejection (>10 min estimate). get_final_message() collects
+                # the full response identically to messages.create().
+                if max_tokens > 16384:
+                    with self._client.messages.stream(**kwargs) as stream:
+                        response = stream.get_final_message()
+                else:
+                    response = self._client.messages.create(**kwargs)
                 return self._parse_response(response, resolved_model)
+            except anthropic.RateLimitError as e:
+                last_error = e
+                # Rate limits need a much longer backoff (60s base)
+                delay = 60.0 * attempt
+                logger.warning(
+                    "Rate limited (attempt %d/%d), waiting %.0fs: %s",
+                    attempt,
+                    self._config.max_retries_per_step,
+                    delay,
+                    e,
+                )
+                if attempt < self._config.max_retries_per_step:
+                    time.sleep(delay)
             except (
                 anthropic.APITimeoutError,
-                anthropic.RateLimitError,
                 anthropic.APIConnectionError,
                 anthropic.InternalServerError,
             ) as e:

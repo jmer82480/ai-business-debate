@@ -74,6 +74,11 @@ class BaseRole:
 
     def _extract_tool_data(self, response: LLMResponse, expected_tool: str) -> dict[str, Any]:
         """Extract and validate tool_use data from response."""
+        if response.stop_reason == "max_tokens":
+            raise ValidationFailure(
+                f"[{self.role_name}] Response truncated (stop_reason=max_tokens, "
+                f"{response.tokens_out} tokens). Increase max_tokens or simplify output."
+            )
         if response.tool_use is None:
             raise ValidationFailure(
                 f"[{self.role_name}] Expected tool_use '{expected_tool}' "

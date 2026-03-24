@@ -1,4 +1,4 @@
-"""Tests for V1 trustworthiness fixes — BadOutputError reprompt, Phase 2 resume, cost tracking."""
+"""Tests for V1 trustworthiness fixes — BadOutputError reprompt, Phase 2 resume, cost tracking, truncation."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from debate.config import DebateConfig, estimate_cost
 from debate.llm.client import LLMResponse
 from debate.llm.fake import FakeLLMClient
 from debate.orchestrator import Orchestrator
-from debate.roles.base import BadOutputError
+from debate.roles.base import BadOutputError, ValidationFailure
 from debate.roles.bootstrapper import MIN_IDEAS, _parse_ideas
 from debate.schemas.state import DebateState, Phase, RunMeta, StepStatus
 from debate.schemas.votes import Vote
@@ -242,6 +242,122 @@ class TestCostTracking:
         expected_cost = estimate_cost("claude-sonnet-4-6", 500, 200)
         assert step.estimated_cost_usd == pytest.approx(expected_cost)
         assert step.model_used == "claude-sonnet-4-6"
+
+
+# ---------------------------------------------------------------------------
+# Truncated response / empty merge pool
+# ---------------------------------------------------------------------------
+
+
+class TestTruncatedResponse:
+    """stop_reason=max_tokens must raise ValidationFailure, not silently proceed."""
+
+    def test_extract_tool_data_rejects_truncated(self, config):
+        """_extract_tool_data raises ValidationFailure when stop_reason is max_tokens."""
+        from debate.roles.bootstrapper import Bootstrapper
+
+        client = FakeLLMClient()
+        role = Bootstrapper(client, config)
+
+        truncated_response = LLMResponse(
+            tool_use={},
+            tool_name="submit_ideas",
+            model="fake",
+            tokens_in=100,
+            tokens_out=16384,
+            stop_reason="max_tokens",
+        )
+        with pytest.raises(ValidationFailure, match="truncated"):
+            role._extract_tool_data(truncated_response, "submit_ideas")
+
+    def test_truncated_merge_triggers_retry(self, config):
+        """Merge step retries when response is truncated instead of accepting empty pool."""
+        call_count = 0
+
+        def respond(messages, system, tools, model, call_index, **kw):
+            nonlocal call_count
+            call_count += 1
+            tool_name = ""
+            for t in (tools or []):
+                if isinstance(t, dict) and "name" in t:
+                    tool_name = t["name"]
+                    break
+
+            if tool_name == "submit_ideas":
+                return LLMResponse(
+                    tool_use={"ideas": [_stub_idea(i) for i in range(5)]},
+                    tool_name="submit_ideas",
+                    model="fake",
+                    tokens_in=100,
+                    tokens_out=50,
+                )
+            if tool_name == "submit_merged_pool" and call_count <= 5:
+                # First merge attempt: truncated
+                return LLMResponse(
+                    tool_use={},
+                    tool_name="submit_merged_pool",
+                    model="fake",
+                    tokens_in=100,
+                    tokens_out=16384,
+                    stop_reason="max_tokens",
+                )
+            if tool_name == "submit_merged_pool":
+                # Second merge attempt: success
+                merged = []
+                for i in range(8):
+                    idea = _stub_idea(i)
+                    idea["idea_id"] = f"stub-{i}-00000000"
+                    idea["proposed_by"] = ["bootstrapper", "market_analyst"]
+                    merged.append(idea)
+                return LLMResponse(
+                    tool_use={"ideas": merged, "eliminated": [], "conflicts": []},
+                    tool_name="submit_merged_pool",
+                    model="fake",
+                    tokens_in=100,
+                    tokens_out=5000,
+                    stop_reason="end_turn",
+                )
+            # Default for votes etc
+            return LLMResponse(
+                tool_use={"votes": []},
+                tool_name=tool_name,
+                model="fake",
+                tokens_in=100,
+                tokens_out=50,
+            )
+
+        client = FakeLLMClient(response_fn=respond)
+        orch = Orchestrator(client, config)
+        orch._run_phase1()
+
+        # Merge should retry after truncation and succeed
+        step_key = "phase_2_merge_vote.merge"
+        result = orch._run_step(step_key, orch._moderator.merge_ideas,
+                                orch._format_all_phase1_ideas())
+        assert result is not None
+        data, _ = result
+        assert len(data.get("ideas", [])) == 8
+
+
+class TestEmptyMergePoolGate:
+    """Orchestrator must refuse to proceed to voting with an empty merge pool."""
+
+    def test_empty_pool_raises_before_voting(self, config):
+        """If merge produces 0 ideas, Phase 2 raises before voting begins."""
+        from debate.cli import _make_dry_run_client
+
+        client = _make_dry_run_client()
+        orch = Orchestrator(client, config)
+        orch._run_phase1()
+
+        # Simulate a merge that produced 0 ideas
+        orch.state.merged_pool = []
+        # Mark merge as completed so it's skipped
+        orch.state.get_step("phase_2_merge_vote.merge").mark_running()
+        orch.state.get_step("phase_2_merge_vote.merge").mark_completed()
+
+        with pytest.raises(RuntimeError, match="0 ideas"):
+            orch._run_phase2()
 
 
 # ---------------------------------------------------------------------------

@@ -25,7 +25,7 @@ class Moderator(BaseRole):
             get_merge_prompt(all_ideas_text),
             tools=[tool],
             tool_choice={"type": "tool", "name": "submit_merged_pool"},
-            max_tokens=16384,
+            max_tokens=32768,
         )
         data = self._extract_tool_data(response, "submit_merged_pool")
         return data, self._get_raw_for_debug(response)

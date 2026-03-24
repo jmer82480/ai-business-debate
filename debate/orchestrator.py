@@ -237,6 +237,13 @@ class Orchestrator:
                 self._state.merged_pool = [i for i in merged if passes_gates(i)]
                 console.print(f"  [green]Merged pool: {len(self._state.merged_pool)} ideas[/]")
 
+        # Hard gate: merged pool must not be empty
+        if not self._state.merged_pool:
+            raise RuntimeError(
+                "Phase 2 merge produced 0 ideas. Cannot proceed to voting. "
+                "Check the merge debug artifact for truncation or parsing errors."
+            )
+
         # Step 2b: Each role votes (persisted per-role for resume safety)
         pool_text = compress_merged_pool(self._state)
         idea_ids = [i.idea_id for i in self._state.merged_pool]

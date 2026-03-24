@@ -34,14 +34,14 @@ def main(verbose: bool) -> None:
 @main.command()
 @click.option("--model", default="claude-sonnet-4-6", help="Default model")
 @click.option("--deep-dive-model", default=None, help="Model for deep dives (defaults to --model)")
-@click.option("--no-web-search", is_flag=True, help="Disable web search")
+@click.option("--web-search/--no-web-search", default=False, help="Enable web search (off by default)")
 @click.option("--dry-run", is_flag=True, help="Use fake LLM client (no API calls)")
 @click.option("--max-rounds", default=10, type=int, help="Max Phase 3 debate rounds")
 @click.option("--output-dir", default="output", help="Output directory")
 def run(
     model: str,
     deep_dive_model: str | None,
-    no_web_search: bool,
+    web_search: bool,
     dry_run: bool,
     max_rounds: int,
     output_dir: str,
@@ -50,7 +50,7 @@ def run(
     config = DebateConfig(
         model_default=model,
         model_deep_dive=deep_dive_model or model,
-        web_search_enabled=not no_web_search,
+        web_search_enabled=web_search,
         max_phase3_rounds=max_rounds,
         output_dir=output_dir,
     )

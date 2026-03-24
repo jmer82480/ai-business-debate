@@ -40,24 +40,25 @@ class TestConfigPersistence:
         """Resuming a run restores the original config, not defaults."""
         from debate.llm.dry_run import make_dry_run_client
 
-        config.web_search_enabled = False
+        # Original run: web_search ON (non-default), custom rounds
+        config.web_search_enabled = True
         config.max_phase3_rounds = 7
         client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch.run()
 
-        # Create a new orchestrator with DEFAULT config (web_search=True)
+        # Create a new orchestrator with DEFAULT config (web_search=False)
         default_config = DebateConfig(
             output_dir=config.output_dir,
             checkpoint_dir=config.checkpoint_dir,
         )
-        assert default_config.web_search_enabled is True  # confirm default
+        assert default_config.web_search_enabled is False  # confirm default
 
         orch2 = Orchestrator(make_dry_run_client(), default_config, run_id=orch.run_id)
         orch2.resume()
 
-        # After resume, config should be restored to original values
-        assert orch2._config.web_search_enabled is False
+        # After resume, config should be restored to original values (True, 7)
+        assert orch2._config.web_search_enabled is True
         assert orch2._config.max_phase3_rounds == 7
 
     def test_config_roundtrip_via_dict(self):
@@ -238,28 +239,31 @@ class TestResumeRebuildsDependencies:
         """After resume, role adapters must use the restored config, not the default."""
         from debate.llm.dry_run import make_dry_run_client
 
-        config.web_search_enabled = False
+        # Original run: web_search ON (non-default)
+        config.web_search_enabled = True
         client = make_dry_run_client()
         orch = Orchestrator(client, config)
         orch.run()
 
-        # Resume with a default config (web_search_enabled=True)
+        # Resume with a default config (web_search_enabled=False now)
         default_config = DebateConfig(
             output_dir=config.output_dir,
             checkpoint_dir=config.checkpoint_dir,
         )
+        assert default_config.web_search_enabled is False  # verify default
         orch2 = Orchestrator(make_dry_run_client(), default_config, run_id=orch.run_id)
         orch2.resume()
 
-        # Roles should use the restored config, not the default
+        # Roles should use the restored config (True), not the default (False)
         for role in orch2._roles.values():
-            assert role._config.web_search_enabled is False
+            assert role._config.web_search_enabled is True
 
     def test_client_config_updated_on_resume(self, config):
         """After resume, the LLM client's config must be updated to match the restored config."""
         from debate.llm.dry_run import make_dry_run_client
 
-        config.web_search_enabled = False
+        # Original run: web_search ON, custom retries
+        config.web_search_enabled = True
         config.max_retries_per_step = 5
         client = make_dry_run_client()
         orch = Orchestrator(client, config)
@@ -270,14 +274,14 @@ class TestResumeRebuildsDependencies:
             """Fake client that exposes set_config like AnthropicClient."""
             def __init__(self, inner):
                 super().__init__(response_fn=inner._response_fn)
-                self._config = DebateConfig()  # default: web_search=True
+                self._config = DebateConfig()  # default: web_search=False
 
             def set_config(self, cfg):
                 self._config = cfg
 
         inner = make_dry_run_client()
         tracking_client = ConfigTrackingClient(inner)
-        assert tracking_client._config.web_search_enabled is True  # starts with default
+        assert tracking_client._config.web_search_enabled is False  # starts with default
 
         default_config = DebateConfig(
             output_dir=config.output_dir,
@@ -286,8 +290,8 @@ class TestResumeRebuildsDependencies:
         orch2 = Orchestrator(tracking_client, default_config, run_id=orch.run_id)
         orch2.resume()
 
-        # Client config should now match the original run
-        assert tracking_client._config.web_search_enabled is False
+        # Client config should now match the original run (True, 5)
+        assert tracking_client._config.web_search_enabled is True
         assert tracking_client._config.max_retries_per_step == 5
 
 
@@ -381,3 +385,77 @@ def _stub_idea(idx: int) -> dict:
         "why_now": "AI costs dropped.",
         "evidence": [],
     }
+
+
+# ---------------------------------------------------------------------------
+# Cost-hardening: web search default, merge compression
+# ---------------------------------------------------------------------------
+
+
+class TestWebSearchDefault:
+    def test_config_default_is_off(self):
+        """DebateConfig defaults to web_search_enabled=False."""
+        config = DebateConfig()
+        assert config.web_search_enabled is False
+
+    def test_config_to_dict_preserves_web_search(self):
+        """to_dict/from_dict roundtrip preserves web_search_enabled."""
+        for val in (True, False):
+            config = DebateConfig(web_search_enabled=val)
+            restored = DebateConfig.from_dict(config.to_dict())
+            assert restored.web_search_enabled is val
+
+    def test_resume_preserves_web_search_setting(self, config):
+        """Resume restores the original web_search_enabled, even if CLI default changed."""
+        from debate.llm.dry_run import make_dry_run_client
+
+        # Run with web search ON
+        config.web_search_enabled = True
+        orch = Orchestrator(make_dry_run_client(), config)
+        orch.run()
+
+        # Resume with default config (web_search=False)
+        default_config = DebateConfig(
+            output_dir=config.output_dir,
+            checkpoint_dir=config.checkpoint_dir,
+        )
+        assert default_config.web_search_enabled is False
+
+        orch2 = Orchestrator(make_dry_run_client(), default_config, run_id=orch.run_id)
+        orch2.resume()
+        assert orch2._config.web_search_enabled is True  # restored from checkpoint
+
+
+class TestMergeInputCompression:
+    def test_merge_input_is_compact(self, config):
+        """Compressed merge input is shorter than the old verbose format."""
+        from debate.llm.dry_run import make_dry_run_client
+
+        client = make_dry_run_client()
+        orch = Orchestrator(client, config)
+        orch._run_phase1()
+
+        text = orch._format_all_phase1_ideas()
+        # Each idea should be a single line (no multi-line expansion)
+        idea_lines = [l for l in text.splitlines() if l.strip() and not l.startswith("---")]
+        for line in idea_lines:
+            # Compact format uses | separators on a single line
+            assert "|" in line, f"Expected compact | format: {line[:80]}"
+
+    def test_merge_input_contains_all_fields(self, config):
+        """Compressed merge input still has the fields the moderator needs."""
+        from debate.llm.dry_run import make_dry_run_client
+
+        client = make_dry_run_client()
+        orch = Orchestrator(client, config)
+        orch._run_phase1()
+
+        text = orch._format_all_phase1_ideas()
+        # Must contain structural fields
+        assert "Cost=" in text
+        assert "Autonomy(" in text
+        assert "Rev:" in text
+        assert "Acq:" in text
+        assert "Moat:" in text
+        assert "Risk:" in text
+        assert "Why now:" in text

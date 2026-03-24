@@ -38,8 +38,8 @@ class DebateConfig:
     max_total_cost_usd: float | None = None
     prompt_context_budget_tokens: int = 12000
 
-    # Web search
-    web_search_enabled: bool = True
+    # Web search (off by default — opt in with --web-search for evidence-grade runs)
+    web_search_enabled: bool = False
 
     # Debug artifacts
     debug_max_files: int = 50

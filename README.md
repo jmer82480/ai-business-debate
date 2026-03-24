@@ -51,7 +51,7 @@ debate run
 Options:
 - `--model claude-sonnet-4-6` — default model for all phases
 - `--deep-dive-model claude-opus-4-6` — model for Phase 4 deep dives
-- `--no-web-search` — disable web search (faster, less evidence)
+- `--web-search / --no-web-search` — enable web search (off by default; adds evidence but costs ~8× more)
 - `--dry-run` — use fake LLM client (no API calls, validates full flow)
 - `--max-rounds 10` — max Phase 3 debate rounds before forcing finalists
 - `--output-dir output` — where markdown files are rendered
@@ -63,7 +63,7 @@ Options:
 debate resume --run-id <run-id>
 ```
 
-Resume restores the **original run config** (model, web search, max rounds) from the checkpoint. You don't need to re-pass flags like `--no-web-search` — they're persisted automatically.
+Resume restores the **original run config** (model, web search, max rounds) from the checkpoint. You don't need to re-pass flags — they're persisted automatically.
 
 ### Check status of all runs
 
@@ -115,7 +115,7 @@ With web search enabled, a single call can consume 300K+ input tokens (search re
 python3 -m pytest tests/ -v
 ```
 
-101 tests covering: schemas, validators, checkpoint persistence, context compression, renderers, orchestrator flow, phase invariants, failure recovery, resume fidelity (config + client + roles + all phases), cost tracking, truncation guards, merge validation, and Phase 2/3/4/5 resume safety.
+107 tests covering: schemas, validators, checkpoint persistence, context compression, renderers, orchestrator flow, phase invariants, failure recovery, resume fidelity (config + client + roles + all phases), cost tracking, truncation guards, merge validation, Phase 2/3/4/5 resume safety, web search defaults, and merge input compression.
 
 ## Protocol
 
